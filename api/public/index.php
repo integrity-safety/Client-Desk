@@ -76,6 +76,7 @@ $routes = [
     ['POST', '/tickets/{id}/accept', fn($id) => team_ticket_accept(require_auth(), $id)],
     ['POST', '/tickets/{id}/decline', fn($id) => team_ticket_decline(require_auth(), $id)],
     ['POST', '/tickets/{id}/messages', fn($id) => team_ticket_reply(require_auth(), $id)],
+    ['DELETE', '/tickets/{id}',      fn($id) => team_ticket_delete(require_auth(), $id)],
 
     // Requester management (admin, scoped to a client).
     ['GET',    '/clients/{id}/requesters',     fn($id) => client_requesters(require_auth(), $id)],

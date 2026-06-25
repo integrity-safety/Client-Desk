@@ -19,13 +19,22 @@ function task_row_to_api(array $r): array {
         'estHours'  => isset($r['est_hours']) && $r['est_hours'] !== null ? (int)$r['est_hours'] : null,
         'assigneeId'   => isset($r['assignee_id']) && $r['assignee_id'] !== null ? (int)$r['assignee_id'] : null,
         'assignee'     => $r['assignee_name'] ?? null,
+        // True when an accepted request was turned into this task. Lets the UI
+        // warn that deleting the task will cancel the originating request.
+        'fromRequest'  => isset($r['ticket_id']) && $r['ticket_id'] !== null,
+        'requester'    => $r['requester_name'] ?? null,
     ];
 }
 
 function tasks_list(array $user): void {
     $wid = user_workspace_id($user);
     $clientId = isset($_GET['client']) ? (int)$_GET['client'] : 0;
-    $base = 'SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.workspace_id = ?';
+    $base = 'SELECT t.*, u.name AS assignee_name, tk.id AS ticket_id, ru.name AS requester_name'
+          . ' FROM tasks t'
+          . ' LEFT JOIN users u ON u.id = t.assignee_id'
+          . ' LEFT JOIN tickets tk ON tk.task_id = t.id AND tk.state = "accepted"'
+          . ' LEFT JOIN users ru ON ru.id = tk.requester_id'
+          . ' WHERE t.workspace_id = ?';
     if ($clientId) {
         $s = db()->prepare($base . ' AND t.client_id = ? ORDER BY t.created_at DESC');
         $s->execute([$wid, $clientId]);
@@ -129,6 +138,11 @@ function tasks_delete(array $user, int $id): void {
     $cur = task_owned($id, $wid);
     if ($cur) {
         log_task_event($wid, $user, 'deleted', ['id' => $id, 'client_id' => $cur['client_id'], 'title' => $cur['title']], null, null);
+        // If this task came from a request, cancel that request and notify the
+        // requester. Done before the delete so the ticket->task link is intact.
+        if (function_exists('tickets_on_task_deleted')) {
+            tickets_on_task_deleted($id);
+        }
     }
     $s = db()->prepare('DELETE FROM tasks WHERE id = ? AND workspace_id = ?');
     $s->execute([$id, $wid]);

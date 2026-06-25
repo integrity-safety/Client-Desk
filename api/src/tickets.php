@@ -5,6 +5,7 @@
 
 function ticket_status_label(string $state, ?string $taskStatus): string {
     if ($state === 'declined') return 'Declined';
+    if ($state === 'cancelled') return 'Cancelled';
     if ($state === 'submitted') return 'Submitted';
     // accepted:
     switch ($taskStatus) {
@@ -180,6 +181,23 @@ function team_ticket_decline(array $user, int $id): void {
     json_out(['ok' => true]);
 }
 
+// Permanently delete a request. Admin-only, and only for closed requests
+// (cancelled or declined) so an active or in-progress request can't be wiped by
+// accident. The message thread is removed automatically (ticket_messages has
+// ON DELETE CASCADE), and the request disappears from the requester's portal.
+// This is irreversible.
+function team_ticket_delete(array $user, int $id): void {
+    require_csrf();
+    $wid = require_admin($user);
+    $t = ticket_in_workspace($id, $wid);
+    if (!$t) json_out(['error' => 'Not found'], 404);
+    if (!in_array($t['state'], ['cancelled', 'declined'], true)) {
+        json_out(['error' => 'Only closed requests (cancelled or declined) can be deleted'], 409);
+    }
+    db()->prepare('DELETE FROM tickets WHERE id = ? AND workspace_id = ?')->execute([$id, $wid]);
+    json_out(['ok' => true]);
+}
+
 function team_ticket_reply(array $user, int $id): void {
     require_csrf();
     $wid = user_workspace_id($user);
@@ -196,6 +214,23 @@ function team_ticket_reply(array $user, int $id): void {
         $who . ' replied to your request. Here\'s the latest:',
         ['note' => $preview, 'extra' => [['From', $who]], 'cta' => 'View & reply in your portal']);
     json_out(['ok' => true], 201);
+}
+
+// Called from tasks_delete when a team member deletes a task. If that task was
+// created by accepting a request, the request can't be served anymore, so move
+// it to 'cancelled' (kept as a record), clear the now-dangling task link, and
+// let the requester know. Call this BEFORE the task row is deleted so the link
+// is still readable. No-op for tasks that didn't come from a request.
+function tickets_on_task_deleted(int $taskId): void {
+    $s = db()->prepare('SELECT * FROM tickets WHERE task_id = ? AND state = "accepted"');
+    $s->execute([$taskId]);
+    $t = $s->fetch();
+    if (!$t) return;
+    db()->prepare('UPDATE tickets SET state = "cancelled", task_id = NULL, updated_at = NOW() WHERE id = ?')
+        ->execute([(int)$t['id']]);
+    notify_requester($t, 'Your request was cancelled',
+        "We've cancelled this request and it's no longer in progress. If you still need it, please submit a new request or reply in your portal.",
+        ['extra' => [['Status', 'Cancelled']], 'cta' => 'View in your portal']);
 }
 
 // Called from tasks_update when a linked task hits "done".
