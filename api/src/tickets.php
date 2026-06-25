@@ -354,6 +354,9 @@ function ticket_detail_payload(array $t, bool $teamView): array {
         $rr = $r->fetch();
         $payload['requester'] = $rr ? ['name' => $rr['name'], 'email' => $rr['email']] : null;
         $payload['clientId'] = (int)$t['client_id'];
+        // Raw linked-task status (todo/inprogress/blocked/done) so the team can
+        // edit it from the Requests tab; null when there's no linked task.
+        $payload['taskStatus'] = $taskStatus;
     }
     return $payload;
 }

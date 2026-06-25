@@ -218,7 +218,11 @@ export default function App() {
   };
   const changeStatus = async (t, status) => { try { await api.updateTask(t.id, { status }); await refresh(); } catch (e) { flash(e.message); } };
   const deleteTask = (t) => setModal({ type: 'confirm',
-    title: 'Delete task', message: `Delete "${t.title}"? This can't be undone.`, confirmLabel: 'Delete', danger: true,
+    title: 'Delete task',
+    message: t.fromRequest
+      ? `Delete "${t.title}"? This task came from a request${t.requester ? ` by ${t.requester}` : ''}. Deleting it will cancel that request and email the requester. This can't be undone.`
+      : `Delete "${t.title}"? This can't be undone.`,
+    confirmLabel: 'Delete', danger: true,
     onConfirm: async () => { await api.deleteTask(t.id); await refresh(); } });
 
   const doImport = async (text) => {
@@ -329,7 +333,7 @@ export default function App() {
         {tab === 'team' ? <TeamView isAdmin={isAdmin} meId={user.id} flash={flash} onChanged={loadMembers}
             theme={theme} onTheme={saveTheme} />
           : tab === 'messages' ? <Messages meId={user.id} members={members} onConvUpdate={setChatUnread} />
-          : tab === 'requests' ? <RequestsView onGotoClient={gotoClient} onChanged={() => { loadTicketAlert(); refresh(); }} flash={flash} userName={user.name} />
+          : tab === 'requests' ? <RequestsView isAdmin={isAdmin} onGotoClient={gotoClient} onChanged={() => { loadTicketAlert(); refresh(); }} flash={flash} userName={user.name} />
           : tab === 'calendar' ? <Calendar members={members} meId={user.id} onGotoClient={gotoClient} flash={flash} reloadSignal={liveTick} />
           : tab === 'activity' ? <ActivityView members={members} clients={clients} onGoto={gotoClient} reloadSignal={liveTick} />
           : tab === 'clients' ? <MobileClientsView clients={clients} onGoto={gotoClient} onAdd={() => setModal({ type: 'client' })} />
@@ -842,7 +846,7 @@ function ThemePicker({ theme, onTheme }) {
   );
 }
 
-const TK_TONE = { 'Submitted': 'submitted', 'Accepted': 'accepted', 'In progress': 'inprogress', 'Needs your input': 'needs', 'Completed': 'done', 'Declined': 'declined' };
+const TK_TONE = { 'Submitted': 'submitted', 'Accepted': 'accepted', 'In progress': 'inprogress', 'Needs your input': 'needs', 'Completed': 'done', 'Declined': 'declined', 'Cancelled': 'declined' };
 const tkTime = (s) => new Date(s.replace(' ', 'T')).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 function RequesterPanel({ client, onClose }) {
@@ -896,14 +900,14 @@ function RequesterPanel({ client, onClose }) {
   );
 }
 
-function RequestsView({ onGotoClient, onChanged, flash, userName }) {
+function RequestsView({ isAdmin, onGotoClient, onChanged, flash, userName }) {
   const [data, setData] = useState(null);
   const [openId, setOpenId] = useState(null);
   const load = useCallback(() => api.tickets().then(setData).catch(() => setData({ tickets: [], queue: 0 })), []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const t = setInterval(load, 12000); return () => clearInterval(t); }, [load]);
 
-  if (openId) return <TicketDetailTeam id={openId} userName={userName} onBack={() => { setOpenId(null); load(); }}
+  if (openId) return <TicketDetailTeam id={openId} isAdmin={isAdmin} userName={userName} onBack={() => { setOpenId(null); load(); }}
     onGotoClient={onGotoClient} onChanged={() => { load(); onChanged(); }} flash={flash} />;
 
   const tickets = data?.tickets || [];
@@ -948,7 +952,7 @@ function TicketRow({ t, onClick }) {
   );
 }
 
-function TicketDetailTeam({ id, userName, onBack, onGotoClient, onChanged, flash }) {
+function TicketDetailTeam({ id, isAdmin, userName, onBack, onGotoClient, onChanged, flash }) {
   const [t, setT] = useState(null);
   const [draft, setDraft] = useState('');
   const [target, setTarget] = useState(null); // null = uninitialized
@@ -960,6 +964,8 @@ function TicketDetailTeam({ id, userName, onBack, onGotoClient, onChanged, flash
   const accept = async () => { try { await api.ticketAccept(id, target || null); flash(target ? `Accepted with target ${fmtDate(target)}` : 'Accepted — added to the client as a task'); load(); onChanged(); } catch (e) { flash(e.message); } };
   const decline = async () => { if (!window.confirm('Decline this request? The requester will see it as declined.')) return; try { await api.ticketDecline(id); load(); onChanged(); } catch (e) { flash(e.message); } };
   const reply = async () => { const body = draft.trim(); if (!body) return; setDraft(''); try { await api.ticketReply(id, body); load(); onChanged(); } catch (e) { flash(e.message); } };
+  const deleteTicket = async () => { if (!window.confirm('Permanently delete this request and its entire message thread? It will also disappear from the requester’s portal. This can’t be undone.')) return; try { await api.ticketDelete(id); onChanged(); onBack(); } catch (e) { flash(e.message); } };
+  const changeTaskStatus = async (status) => { try { await api.updateTask(t.taskId, { status }); load(); onChanged(); } catch (e) { flash(e.message); } };
   if (!t) return <div className="content"><p className="none">Loading…</p></div>;
 
   return (
@@ -967,8 +973,13 @@ function TicketDetailTeam({ id, userName, onBack, onGotoClient, onChanged, flash
       <div className="topbar"><div className="who"><button className="link-back" onClick={onBack}>← All requests</button><h2 style={{ marginTop: 4 }}>{t.title}</h2>
         <div className="sub">{t.requester ? `${t.requester.name || t.requester.email} · ${t.requester.email}` : 'Requester removed'}</div></div>
         <div className="topbar-actions">
-          <span className={'tk-status ' + (TK_TONE[t.status] || 'submitted')} style={{ alignSelf: 'center' }}>{t.status}</span>
+          {t.state === 'accepted' && t.taskId
+            ? <select className={'status-sel s-' + (t.taskStatus || 'todo')} value={t.taskStatus || 'todo'} onChange={(e) => changeTaskStatus(e.target.value)} aria-label="Status" style={{ alignSelf: 'center' }}>
+                {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+              </select>
+            : <span className={'tk-status ' + (TK_TONE[t.status] || 'submitted')} style={{ alignSelf: 'center' }}>{t.status}</span>}
           {t.taskId && <button className="btn" onClick={() => onGotoClient(t.clientId)}>Open in client</button>}
+          {isAdmin && (t.state === 'cancelled' || t.state === 'declined') && <button className="btn danger" onClick={deleteTicket}>Delete request</button>}
         </div>
       </div>
       <div className="content" style={{ maxWidth: 760 }}>

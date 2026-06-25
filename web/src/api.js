@@ -91,6 +91,7 @@ export const api = {
   ticketAccept:   (id, date) => req('POST', `/tickets/${id}/accept`, { date: date || null }),
   ticketDecline:  (id) => req('POST', `/tickets/${id}/decline`, {}),
   ticketReply:    (id, body) => req('POST', `/tickets/${id}/messages`, { body }),
+  ticketDelete:   (id) => req('DELETE', `/tickets/${id}`, {}),
 
   clientRequesters:    (id) => req('GET', `/clients/${id}/requesters`),
   requesterInvite:     (id, email) => req('POST', `/clients/${id}/requester-invite`, { email }),
