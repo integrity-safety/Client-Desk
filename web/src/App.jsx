@@ -531,7 +531,7 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
   const [showReq, setShowReq] = useState(false);
   const [view, setView] = useState('tasks');
   const [sort, setSort] = useState('priority');
-  const [filter, setFilter] = useState('open');
+  const [filter, setFilter] = useState('all');
   const staleCount = tasks.filter(isStale).length;
 
   const visible = (() => {
@@ -583,7 +583,7 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
           : <>
             <div className="list-controls">
               <div className="seg small">
-                {[['open', 'Open'], ['all', 'All'], ['done', 'Done']].map(([k, l]) => (
+                {[['all', 'All'], ['done', 'Done']].map(([k, l]) => (
                   <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>{l}</button>
                 ))}
               </div>
@@ -628,7 +628,15 @@ function TaskCard({ t, onStatus, onEdit, onDelete }) {
           <span className="t-added">Added {fmtDate(t.createdAt)}</span>
           {t.status === 'done' && t.completedAt && <span>Completed {fmtDate(t.completedAt)}</span>}
         </div>
-        {t.notes && <div className="t-note"><b>Private note</b>{t.notes}</div>}
+        {t.notes && (
+          <div className="t-note">
+            <span className="t-note-label">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
+              Private note
+            </span>
+            {t.notes}
+          </div>
+        )}
       </div>
       <div className="t-actions">
         <select className={'status-sel s-' + t.status} value={t.status} onChange={(e) => onStatus(t, e.target.value)} aria-label="Status">
