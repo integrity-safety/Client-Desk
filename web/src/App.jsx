@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, setCsrf } from './api.js';
 import Login, { AcceptInvite, ResetPassword } from './components/Login.jsx';
-import { Modal, Confirm, ClientModal, TaskModal, ReportModal, ShareModal, ImportModal } from './components/Modals.jsx';
+import { Modal, Confirm, ClientModal, TaskModal, ImportModal } from './components/Modals.jsx';
 import Calendar from './components/Calendar.jsx';
 import Messages from './components/Messages.jsx';
 import Portal from './components/Portal.jsx';
@@ -266,7 +266,7 @@ export default function App() {
             <span className="ti">
               <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="3.5" width="13" height="12" rx="2" /><path d="M2.5 7.5h13M6 2v3M12 2v3M5.5 11h7" /></svg>
             </span>
-            <span className="tl"><b>This week</b></span>
+            <span className="tl"><b>Weekly report</b></span>
           </button>
           <button className={'nav-btn' + (tab === 'calendar' ? ' active' : '')} onClick={() => setTab('calendar')}>
             <span className="ti">
@@ -339,15 +339,14 @@ export default function App() {
           : tab === 'activity' ? <ActivityView members={members} clients={clients} onGoto={gotoClient} reloadSignal={liveTick} />
           : tab === 'clients' ? <MobileClientsView clients={clients} onGoto={gotoClient} onAdd={() => setModal({ type: 'client' })} />
           : tab === 'today' ? <TodayView today={today} scope={scope} onScope={setScope} onStatus={changeStatus} onGoto={gotoClient}
-            onShare={() => setModal({ type: 'share' })} onReminderDelete={reminderDelete} />
+            onReminderDelete={reminderDelete} />
           : tab === 'weekly' ? <WeeklyView onGoto={gotoClient} />
           : selected ? <ClientView client={selected} tasks={tasks} memberName={memberName} isAdmin={isAdmin}
             onAddTask={() => setModal({ type: 'task' })}
             onEditTask={(t) => setModal({ type: 'task', task: t })}
             onDeleteTask={deleteTask}
             onStatus={changeStatus}
-            onEditClient={() => setModal({ type: 'client', client: selected })}
-            onReport={() => setModal({ type: 'report' })} />
+            onEditClient={() => setModal({ type: 'client', client: selected })} />
           : <Empty onAdd={() => setModal({ type: 'client' })} />}
       </main>
 
@@ -408,8 +407,6 @@ export default function App() {
       {modal?.type === 'client' && <ClientModal client={modal.client} onSave={saveClient}
         onDelete={() => { setModal(null); deleteClient(modal.client); }} onClose={() => setModal(null)} />}
       {modal?.type === 'task' && <TaskModal task={modal.task} members={members} onSave={saveTask} onClose={() => setModal(null)} />}
-      {modal?.type === 'report' && <ReportModal client={selected} onClose={() => setModal(null)} />}
-      {modal?.type === 'share' && <ShareModal onClose={() => setModal(null)} />}
       {modal?.type === 'import' && <ImportModal onImport={doImport} onClose={() => setModal(null)} />}
       {modal?.type === 'confirm' && <Confirm {...modal} onClose={() => setModal(null)} />}
 
@@ -526,7 +523,7 @@ function ActivityView({ members, clients, onGoto, reloadSignal }) {
   );
 }
 
-function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask, onDeleteTask, onStatus, onEditClient, onReport }) {
+function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask, onDeleteTask, onStatus, onEditClient }) {
   const open = tasks.filter((t) => t.status !== 'done').length;
   const [showReq, setShowReq] = useState(false);
   const [view, setView] = useState('tasks');
@@ -561,9 +558,6 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
           </button>
           <button className="btn" onClick={onAddTask}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M8 3v10M3 8h10" /></svg> Add task
-          </button>
-          <button className="btn primary" onClick={onReport}>
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 2h6l3 3v9H4z" /><path d="M6 8h5M6 11h5M6 5h2" /></svg> Client report
           </button>
         </div>
       </div>
@@ -655,7 +649,7 @@ function TaskCard({ t, onStatus, onEdit, onDelete }) {
   );
 }
 
-function TodayView({ today, scope, onScope, onStatus, onGoto, onShare, onReminderDelete }) {
+function TodayView({ today, scope, onScope, onStatus, onGoto, onReminderDelete }) {
   const reminders = today.reminders || [];
   const count = today.overdue.length + today.today.length + reminders.length;
   return (
@@ -667,7 +661,6 @@ function TodayView({ today, scope, onScope, onStatus, onGoto, onShare, onReminde
             <button className={scope === 'mine' ? 'on' : ''} onClick={() => onScope('mine')}>Mine</button>
             <button className={scope === 'all' ? 'on' : ''} onClick={() => onScope('all')}>Team</button>
           </div>
-          <button className="btn primary" onClick={onShare} title="Draft a daily update for a coworker">Share my day</button>
         </div>
       </div>
       <div className="content">
@@ -1080,77 +1073,138 @@ function TicketDetailTeam({ id, isAdmin, userName, onBack, onGotoClient, onChang
   );
 }
 
+// Weekly report: an all-clients dashboard (done in the last 7 days + due in the next 7),
+// grouped by client, filterable to a single client, and printable / saveable as a PDF
+// to share with a client or the team. Replaces the old copy-paste "Share my day" /
+// "Client report" drafts.
 function WeeklyView({ onGoto }) {
-  const [scope, setScope] = useState('mine');
+  const [scope, setScope] = useState('all');   // team-wide by default
+  const [client, setClient] = useState('all');
   const [data, setData] = useState(null);
-  const load = useCallback(() => api.weekly(scope).then(setData).catch(() => setData({ completed: [], upcoming: [] })), [scope]);
+  const load = useCallback(
+    () => api.weekly(scope).then(setData).catch(() => setData({ completed: [], upcoming: [] })),
+    [scope]
+  );
   useEffect(() => { load(); }, [load]);
-  const completed = data?.completed || [];
-  const upcoming = data?.upcoming || [];
-  const reminders = data?.reminders || [];
-  const delReminder = async (id) => { try { await api.deleteTimeline(id); await load(); } catch { /* */ } };
-  const range = data ? `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}` : 'Mon–Sun';
+
+  // Group completed + upcoming under each client.
+  const groups = useMemo(() => {
+    const map = new Map();
+    const ensure = (id, name) => {
+      const k = String(id);
+      if (!map.has(k)) map.set(k, { clientId: id, client: name, completed: [], upcoming: [] });
+      return map.get(k);
+    };
+    (data?.completed || []).forEach((t) => ensure(t.clientId, t.client).completed.push(t));
+    (data?.upcoming || []).forEach((t) => ensure(t.clientId, t.client).upcoming.push(t));
+    return [...map.values()].sort((a, b) => a.client.localeCompare(b.client));
+  }, [data]);
+
+  // If the chosen client drops out of the data (e.g. after a scope switch), reset to all.
+  useEffect(() => {
+    if (client !== 'all' && data && !groups.some((g) => String(g.clientId) === String(client))) setClient('all');
+  }, [groups, client, data]);
+
+  const shown = client === 'all' ? groups : groups.filter((g) => String(g.clientId) === String(client));
+  const totalDone = (data?.completed || []).length;
+  const totalUp = (data?.upcoming || []).length;
+  const range = data ? `${fmtDate(data.doneFrom)} – ${fmtDate(data.today)}` : 'last 7 days';
+  const clientName = client === 'all' ? null : (groups.find((g) => String(g.clientId) === String(client))?.client || null);
+
   const clientIcon = (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 1.5h4l2.5 2.5v6.5H3z" /></svg>
   );
+
   return (
     <>
       <div className="topbar">
-        <div className="who"><h2>This week</h2><div className="sub">{range}</div></div>
-        <div className="topbar-actions">
+        <div className="who"><h2>Weekly report</h2><div className="sub">Last 7 days · {range}</div></div>
+        <div className="topbar-actions wk-actions">
           <div className="scope-toggle">
             <button className={scope === 'mine' ? 'on' : ''} onClick={() => setScope('mine')}>Mine</button>
             <button className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>Team</button>
           </div>
+          {groups.length > 0 && (
+            <select className="wk-client" value={client} onChange={(e) => setClient(e.target.value)} title="Filter to one client to share their slice only">
+              <option value="all">All clients</option>
+              {groups.map((g) => <option key={g.clientId} value={g.clientId}>{g.client}</option>)}
+            </select>
+          )}
+          <button className="btn primary" onClick={() => window.print()} title="Print or save as PDF to share">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 6V2h6v4M5 12H3.5A1.5 1.5 0 0 1 2 10.5v-3A1.5 1.5 0 0 1 3.5 6h9A1.5 1.5 0 0 1 14 7.5v3a1.5 1.5 0 0 1-1.5 1.5H11M5 10h6v4H5z" /></svg> Print / PDF
+          </button>
         </div>
       </div>
       <div className="content">
         {data === null
           ? <p className="none">Loading…</p>
-          : <>
-              {reminders.length > 0 && <RemindersGroup items={reminders} onGoto={onGoto} onDelete={delReminder} defaultShown={false} />}
-              {completed.length === 0 && upcoming.length === 0
-            ? <div className="all-clear">
-                <div className="glyph"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9.5h18M8 2.5v4M16 2.5v4" /></svg></div>
-                <h3>A quiet week so far</h3>
-                <p>{scope === 'mine' ? "Nothing you've completed since Monday" : 'Nothing the team has completed since Monday'}, and nothing due in the next 7 days.</p>
+          : (
+            <div className="weekly-report" id="weekly-report">
+              {/* Header for the printed/PDF copy (hidden on screen — the topbar covers it there). */}
+              <div className="rep-print-head">
+                <div className="rep-ph-name">{data.workspace || 'Client Desk'}</div>
+                <h1 className="rep-ph-title">Weekly report{clientName ? ` — ${clientName}` : ''}</h1>
+                <div className="rep-ph-meta">Completed {range} · Upcoming through {fmtDate(data.upTo)} · Generated {fmtLong(Date.now())}</div>
               </div>
-            : <>
-                <div className="group">
-                  <div className="group-head"><span className="dot done" /><h3>Completed this week</h3><span className="n">{completed.length}</span></div>
-                  {completed.length === 0
-                    ? <p className="none" style={{ padding: '2px 2px 12px' }}>Nothing completed yet this week.</p>
-                    : completed.map((t) => (
-                        <div className="brief-card" key={'c' + t.id}>
-                          <div className="bc-body">
-                            <button className="eyebrow" onClick={() => onGoto(t.clientId)} title={`Go to ${t.client}`}>
-                              {clientIcon}{t.client}{scope === 'all' && t.assignee && <span className="assignee-chip" style={{ marginLeft: 8 }}>{t.assignee}</span>}
-                            </button>
-                            <p className="bc-title">{t.title}</p>
-                            <div className="bc-due done">Completed {fmtDate(t.completedAt)}</div>
+
+              {shown.length === 0
+                ? <div className="all-clear">
+                    <div className="glyph"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9.5h18M8 2.5v4M16 2.5v4" /></svg></div>
+                    <h3>A quiet week</h3>
+                    <p>{scope === 'mine' ? "Nothing you've completed in the last 7 days" : 'Nothing completed in the last 7 days'}, and nothing due in the next 7 days.</p>
+                  </div>
+                : (
+                  <>
+                    {client === 'all' && (
+                      <div className="rep-summary">
+                        <span><b>{totalDone}</b> completed</span>
+                        <span><b>{totalUp}</b> due next 7 days</span>
+                        <span><b>{groups.length}</b> {groups.length === 1 ? 'client' : 'clients'}</span>
+                      </div>
+                    )}
+                    {shown.map((g) => (
+                      <section className="rep-client" key={g.clientId}>
+                        <button className="rep-client-name" onClick={() => onGoto(g.clientId)} title={`Go to ${g.client}`}>
+                          {clientIcon}{g.client}
+                        </button>
+                        <div className="rep-cols">
+                          <div className="rep-col">
+                            <div className="rep-col-head"><span className="dot done" />Completed<span className="n">{g.completed.length}</span></div>
+                            {g.completed.length === 0
+                              ? <p className="rep-none">—</p>
+                              : <ul className="rep-list">
+                                  {g.completed.map((t) => (
+                                    <li key={'c' + t.id}>
+                                      <span className="rep-task">{t.title}</span>
+                                      <span className="rep-meta">{fmtDate(t.completedAt)}{scope === 'all' && t.assignee ? ` · ${t.assignee}` : ''}</span>
+                                    </li>
+                                  ))}
+                                </ul>}
+                          </div>
+                          <div className="rep-col">
+                            <div className="rep-col-head"><span className="dot inprogress" />Coming up<span className="n">{g.upcoming.length}</span></div>
+                            {g.upcoming.length === 0
+                              ? <p className="rep-none">—</p>
+                              : <ul className="rep-list">
+                                  {g.upcoming.map((t) => (
+                                    <li key={'u' + t.id}>
+                                      <span className="rep-task">
+                                        {t.priority && t.priority !== 'medium' && <span className={'prio-chip ' + t.priority} style={{ marginRight: 6 }}>{PRIORITY_LABEL[t.priority]}</span>}
+                                        {t.title}
+                                        {t.status === 'blocked' && <span className="rep-blocked">Blocked</span>}
+                                      </span>
+                                      <span className="rep-meta">{t.dueToday ? 'Due today' : `Due ${fmtDate(t.dueDate)}`}{scope === 'all' && t.assignee ? ` · ${t.assignee}` : ''}</span>
+                                    </li>
+                                  ))}
+                                </ul>}
                           </div>
                         </div>
-                      ))}
-                </div>
-                <div className="group">
-                  <div className="group-head"><span className="dot inprogress" /><h3>Due in the next 7 days</h3><span className="n">{upcoming.length}</span></div>
-                  {upcoming.length === 0
-                    ? <p className="none" style={{ padding: '2px 2px 12px' }}>Nothing due in the next 7 days.</p>
-                    : upcoming.map((t) => (
-                        <div className="brief-card" key={'u' + t.id}>
-                          <div className="bc-body">
-                            <button className="eyebrow" onClick={() => onGoto(t.clientId)} title={`Go to ${t.client}`}>
-                              {clientIcon}{t.client}{scope === 'all' && t.assignee && <span className="assignee-chip" style={{ marginLeft: 8 }}>{t.assignee}</span>}
-                            </button>
-                            <p className="bc-title">{t.priority && t.priority !== 'medium' && <span className={'prio-chip ' + t.priority} style={{ marginRight: 8 }}>{PRIORITY_LABEL[t.priority]}</span>}{t.title}</p>
-                            <div className={'bc-due' + (t.dueToday ? ' today' : '')}>{t.dueToday ? 'Due today' : `Due ${fmtDate(t.dueDate)}`}</div>
-                            {t.status === 'blocked' && <div className="bc-due over">Blocked</div>}
-                          </div>
-                        </div>
-                      ))}
-                </div>
-              </>}
-            </>}
+                      </section>
+                    ))}
+                  </>
+                )}
+            </div>
+          )}
       </div>
     </>
   );

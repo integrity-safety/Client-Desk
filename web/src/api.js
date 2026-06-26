@@ -69,8 +69,6 @@ export const api = {
   weekly: (scope) => req('GET', `/weekly?scope=${scope || 'mine'}`),
   dashboard: () => req('GET', '/dashboard'),
   dashboardUpcoming: () => req('GET', '/dashboard/upcoming'),
-  report: (clientId, asOf) => req('GET', `/report/${clientId}?asOf=${asOf}`),
-  share:  (scope) => req('GET', `/share?scope=${scope || 'mine'}`),
   import: (d) => req('POST', '/import', d),
 
   calendar:    (from, to) => req('GET', `/calendar?from=${from}&to=${to}`),

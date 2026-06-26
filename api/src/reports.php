@@ -58,15 +58,14 @@ function view_weekly(array $user): void {
 
     $now   = new DateTime('now', $tz);
     $today = $now->format('Y-m-d');
-    // Monday of the current week. ISO weekday N: Mon=1..Sun=7.
-    $monday = (clone $now)->modify('-' . ((int)$now->format('N') - 1) . ' days')->format('Y-m-d');
-    $sunday = (new DateTime($monday, $tz))->modify('+6 days')->format('Y-m-d');
-    // Rolling 7-day look-ahead for upcoming work (today through today+6).
-    $ahead  = (clone $now)->modify('+6 days')->format('Y-m-d');
+    // Rolling windows: completed in the last 7 days (today-6 .. today),
+    // upcoming due in the next 7 days (today .. today+6).
+    $from7 = (clone $now)->modify('-6 days')->format('Y-m-d');
+    $ahead = (clone $now)->modify('+6 days')->format('Y-m-d');
 
-    // Completed this week: done, completed_at within Mon 00:00 .. Sun 23:59:59.
-    $cFrom = $monday . ' 00:00:00';
-    $cTo   = $sunday . ' 23:59:59';
+    // Completed in the last 7 days: done, completed_at within (today-6) 00:00 .. today 23:59:59.
+    $cFrom = $from7 . ' 00:00:00';
+    $cTo   = $today . ' 23:59:59';
     $cSql = 'SELECT t.id, t.client_id, t.title, t.priority, t.completed_at,
                     c.name AS client_name, u.name AS assignee_name
              FROM tasks t JOIN clients c ON c.id = t.client_id
@@ -103,7 +102,7 @@ function view_weekly(array $user): void {
                 'assignee'=>$r['assignee_name']];
     }, $us->fetchAll());
 
-    // Reminders dated within this week (client-level, whole team — hidden by default in the UI).
+    // Reminders dated within the report window (client-level, whole team).
     $rs = db()->prepare(
         'SELECT te.id, te.client_id, te.body, te.entry_date, c.name AS client_name
          FROM timeline_entries te JOIN clients c ON c.id = te.client_id
@@ -111,14 +110,15 @@ function view_weekly(array $user): void {
            AND te.entry_date >= ? AND te.entry_date <= ?
          ORDER BY te.entry_date ASC, c.name ASC'
     );
-    $rs->execute([$wid, $monday, $sunday]);
+    $rs->execute([$wid, $from7, $ahead]);
     $reminders = array_map(function ($r) use ($today) {
         return ['id'=>(int)$r['id'], 'clientId'=>(int)$r['client_id'], 'client'=>$r['client_name'],
                 'body'=>$r['body'], 'date'=>$r['entry_date'], 'overdue'=>($r['entry_date'] < $today)];
     }, $rs->fetchAll());
 
     json_out([
-        'weekStart' => $monday, 'weekEnd' => $sunday, 'today' => $today, 'aheadTo' => $ahead,
+        'today' => $today, 'doneFrom' => $from7, 'doneTo' => $today, 'upTo' => $ahead,
+        'workspace' => workspace_name($wid),
         'scope' => $mine ? 'mine' : 'all',
         'completed' => $completed, 'upcoming' => $upcoming, 'reminders' => $reminders,
     ]);
