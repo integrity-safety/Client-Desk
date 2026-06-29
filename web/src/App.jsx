@@ -528,11 +528,11 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
   const [showReq, setShowReq] = useState(false);
   const [view, setView] = useState('tasks');
   const [sort, setSort] = useState('priority');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('todo');
   const staleCount = tasks.filter(isStale).length;
 
   const visible = (() => {
-    let list = tasks.filter((t) => filter === 'all' ? true : filter === 'done' ? t.status === 'done' : t.status !== 'done');
+    let list = tasks.filter((t) => filter === 'done' ? t.status === 'done' : t.status !== 'done');
     const dueVal = (t) => t.dueDate ? new Date(t.dueDate + 'T00:00:00').getTime() : Infinity;
     const created = (t) => new Date((t.createdAt || '').replace(' ', 'T')).getTime();
     list = [...list];
@@ -577,7 +577,7 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
           : <>
             <div className="list-controls">
               <div className="seg small">
-                {[['all', 'All'], ['done', 'Done']].map(([k, l]) => (
+                {[['todo', 'To-Do'], ['done', 'Done']].map(([k, l]) => (
                   <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>{l}</button>
                 ))}
               </div>
@@ -593,7 +593,7 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
             </div>
             <div className="task-flat">
               {visible.length === 0
-                ? <p className="none" style={{ padding: '8px 2px' }}>Nothing in this view.</p>
+                ? <p className="none" style={{ padding: '8px 2px' }}>{filter === 'done' ? 'No completed tasks yet.' : 'All caught up — nothing open.'}</p>
                 : visible.map((t) => <TaskCard key={t.id} t={t} onStatus={onStatus} onEdit={onEditTask} onDelete={onDeleteTask} />)}
             </div>
           </>}
