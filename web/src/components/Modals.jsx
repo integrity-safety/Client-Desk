@@ -69,12 +69,13 @@ export function TaskModal({ task, members = [], holidays = [], onSave, onClose }
   const [priority, setPriority] = useState(task?.priority || 'medium');
   const [estHours, setEstHours] = useState(task?.estHours ?? '');
   const [assigneeId, setAssigneeId] = useState(task?.assigneeId || '');
+  const [reviewWithId, setReviewWithId] = useState(task?.reviewWithId || '');
   return (
     <Modal title={editing ? 'Edit task' : 'New task'} onClose={onClose} footer={
       <>
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" onClick={() => title.trim() &&
-          onSave({ title: title.trim(), detail: detail.trim(), notes: notes.trim(), dueDate: dueDate || null, status, priority, estHours: estHours === '' ? null : Math.max(1, parseInt(estHours, 10) || 1), assigneeId: assigneeId || null })}>
+          onSave({ title: title.trim(), detail: detail.trim(), notes: notes.trim(), dueDate: dueDate || null, status, priority, estHours: estHours === '' ? null : Math.max(1, parseInt(estHours, 10) || 1), assigneeId: assigneeId || null, reviewWithId: reviewWithId || null })}>
           {editing ? 'Save task' : 'Add task'}</button>
       </>
     }>
@@ -112,6 +113,11 @@ export function TaskModal({ task, members = [], holidays = [], onSave, onClose }
           <input type="date" value={dueDate || ''} onChange={(e) => setDueDate(e.target.value)} />
           <DateWarn date={dueDate} holidays={holidays} /></div>
       </div>
+      <div className="field"><label>Review with <span className="hint">— optional; adds it to your Reviews tab</span></label>
+        <select value={reviewWithId} onChange={(e) => setReviewWithId(e.target.value)}>
+          <option value="">No one</option>
+          {members.map((m) => <option key={m.id} value={m.id}>{m.name || m.email}</option>)}
+        </select></div>
       <div className="field"><label>Private note <span className="hint">— internal only, never in reports</span></label>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Just for you" /></div>
     </Modal>

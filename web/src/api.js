@@ -56,6 +56,8 @@ export const api = {
   updateTask: (id, d) => req('PATCH', `/tasks/${id}`, d),
   deleteTask: (id) => req('DELETE', `/tasks/${id}`, {}),
   tasksChanges: (since) => req('GET', '/tasks/changes' + (since != null ? `?since=${since}` : '')),
+  reviews:     () => req('GET', '/reviews'),
+  clearReview: (id) => req('PATCH', `/tasks/${id}`, { reviewWithId: null }),
   activity: (opts = {}) => {
     const q = new URLSearchParams();
     if (opts.before != null) q.set('before', opts.before);

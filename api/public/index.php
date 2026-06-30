@@ -105,6 +105,7 @@ $routes = [
     ['DELETE', '/tasks/{id}',   fn($id) => tasks_delete(require_auth(), $id)],
 
     ['GET', '/activity',        fn() => activity_list(require_auth())],
+    ['GET', '/reviews',         fn() => reviews_list(require_auth())],
 
     ['GET', '/dashboard',       fn() => view_dashboard(require_auth())],
     ['GET', '/dashboard/upcoming', fn() => view_dashboard_upcoming(require_auth())],

@@ -19,6 +19,12 @@ function task_row_to_api(array $r): array {
         'estHours'  => isset($r['est_hours']) && $r['est_hours'] !== null ? (int)$r['est_hours'] : null,
         'assigneeId'   => isset($r['assignee_id']) && $r['assignee_id'] !== null ? (int)$r['assignee_id'] : null,
         'assignee'     => $r['assignee_name'] ?? null,
+        // Review-with flag: who you want to review this task with (review_with,
+        // optional) and who flagged it (review_by). Drives the Reviews tab.
+        'reviewWithId' => isset($r['review_with']) && $r['review_with'] !== null ? (int)$r['review_with'] : null,
+        'reviewWith'   => $r['review_with_name'] ?? null,
+        'reviewById'   => isset($r['review_by']) && $r['review_by'] !== null ? (int)$r['review_by'] : null,
+        'reviewBy'     => $r['review_by_name'] ?? null,
         // True when an accepted request was turned into this task. Lets the UI
         // warn that deleting the task will cancel the originating request.
         'fromRequest'  => isset($r['ticket_id']) && $r['ticket_id'] !== null,
@@ -29,11 +35,14 @@ function task_row_to_api(array $r): array {
 function tasks_list(array $user): void {
     $wid = user_workspace_id($user);
     $clientId = isset($_GET['client']) ? (int)$_GET['client'] : 0;
-    $base = 'SELECT t.*, u.name AS assignee_name, tk.id AS ticket_id, ru.name AS requester_name'
+    $base = 'SELECT t.*, u.name AS assignee_name, tk.id AS ticket_id, ru.name AS requester_name,'
+          . ' rw.name AS review_with_name, rb.name AS review_by_name'
           . ' FROM tasks t'
           . ' LEFT JOIN users u ON u.id = t.assignee_id'
           . ' LEFT JOIN tickets tk ON tk.task_id = t.id AND tk.state = "accepted"'
           . ' LEFT JOIN users ru ON ru.id = tk.requester_id'
+          . ' LEFT JOIN users rw ON rw.id = t.review_with'
+          . ' LEFT JOIN users rb ON rb.id = t.review_by'
           . ' WHERE t.workspace_id = ?';
     if ($clientId) {
         $s = db()->prepare($base . ' AND t.client_id = ? ORDER BY t.created_at DESC');
@@ -58,15 +67,20 @@ function tasks_create(array $user): void {
     $assignee = normalize_assignee($b['assigneeId'] ?? null, $wid);
     $priority = normalize_priority($b['priority'] ?? null);
     $est = normalize_est_hours($b['estHours'] ?? null);
+    // Review flag: who to review with (optional teammate). When set, record the
+    // creator as review_by so the Reviews tab knows who flagged it.
+    $reviewWith = normalize_member($b['reviewWithId'] ?? null, $wid);
+    $reviewBy   = $reviewWith !== null ? ($user['id'] ?? null) : null;
     $completed = $status === 'done' ? gmdate('Y-m-d H:i:s') : null;
     $s = db()->prepare(
-        'INSERT INTO tasks (workspace_id, client_id, title, detail, private_notes, status, due_date, completed_at, assignee_id, priority, est_hours)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+        'INSERT INTO tasks (workspace_id, client_id, title, detail, private_notes, status, due_date, completed_at, assignee_id, priority, est_hours, review_with, review_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
     );
     $s->execute([
         $wid, $clientId, $title,
         str_field($b, 'detail'), str_field($b, 'notes'),
         $status, norm_date($b['dueDate'] ?? null), $completed, $assignee, $priority, $est,
+        $reviewWith, $reviewBy,
     ]);
     $newId = (int)db()->lastInsertId();
     log_task_event($wid, $user, 'created', ['id' => $newId, 'client_id' => $clientId, 'title' => $title], null, null);
@@ -92,8 +106,25 @@ function tasks_update(array $user, int $id): void {
     $newDue = array_key_exists('dueDate', $b) ? norm_date($b['dueDate']) : $cur['due_date'];
     $newAssignee = array_key_exists('assigneeId', $b) ? normalize_assignee($b['assigneeId'], $wid) : $cur['assignee_id'];
     $newEst = array_key_exists('estHours', $b) ? normalize_est_hours($b['estHours']) : $cur['est_hours'];
+
+    // Review flag. Anyone may place a flag on a task that has none, but once a
+    // task is flagged, only the person who flagged it (review_by) may change or
+    // clear it — so a normal task edit by someone else never disturbs the flag.
+    $newReviewWith = $cur['review_with'];
+    $newReviewBy   = $cur['review_by'];
+    if (array_key_exists('reviewWithId', $b)) {
+        $req       = normalize_member($b['reviewWithId'], $wid);
+        $hasFlag   = $cur['review_by'] !== null;
+        $isFlagger = $hasFlag && (int)$cur['review_by'] === (int)($user['id'] ?? 0);
+        if (!$hasFlag || $isFlagger) {
+            $newReviewWith = $req;
+            $newReviewBy   = $req !== null ? ($user['id'] ?? null) : null;
+        }
+        // else: a non-flagger touched the field — leave the existing flag intact.
+    }
+
     $s = db()->prepare(
-        'UPDATE tasks SET title=?, detail=?, private_notes=?, status=?, due_date=?, completed_at=?, assignee_id=?, priority=?, est_hours=?
+        'UPDATE tasks SET title=?, detail=?, private_notes=?, status=?, due_date=?, completed_at=?, assignee_id=?, priority=?, est_hours=?, review_with=?, review_by=?
          WHERE id=? AND workspace_id=?'
     );
     $s->execute([
@@ -106,6 +137,8 @@ function tasks_update(array $user, int $id): void {
         $newAssignee,
         array_key_exists('priority', $b) ? normalize_priority($b['priority']) : $cur['priority'],
         $newEst,
+        $newReviewWith,
+        $newReviewBy,
         $id, $wid,
     ]);
 
@@ -190,6 +223,84 @@ function assignee_name(int $uid): string {
     $r = $s->fetch();
     if (!$r) return 'Someone';
     return ($r['name'] !== null && $r['name'] !== '') ? $r['name'] : $r['email'];
+}
+// Same validation as normalize_assignee (must be a member of this workspace),
+// named for the review-with picker so the intent reads clearly at call sites.
+function normalize_member($v, int $wid): ?int {
+    return normalize_assignee($v, $wid);
+}
+
+// --- Reviews tab (review-with) ---
+
+// One review item = the full task shape (so the edit modal has every field) plus
+// the client name for display.
+function review_item(array $r): array {
+    $t = task_row_to_api($r);
+    $t['clientName'] = $r['client_name'] ?? null;
+    return $t;
+}
+
+// Group already-ordered rows into [{groupId, groupName, tasks:[]}], keyed by the
+// given id/name columns. Preserves row order, so the SQL ORDER BY controls layout.
+function group_reviews(array $rows, string $idCol, string $nameCol, string $nullLabel): array {
+    $groups = [];
+    $index  = [];
+    foreach ($rows as $r) {
+        $gid = $r[$idCol] !== null ? (int)$r[$idCol] : 0;
+        if (!isset($index[$gid])) {
+            $index[$gid] = count($groups);
+            $groups[] = [
+                'groupId'   => $gid ?: null,
+                'groupName' => ($r[$nameCol] !== null && $r[$nameCol] !== '') ? $r[$nameCol] : $nullLabel,
+                'tasks'     => [],
+            ];
+        }
+        $groups[$index[$gid]]['tasks'][] = review_item($r);
+    }
+    return $groups;
+}
+
+// Shared SELECT for review rows: full task columns + the joins task_row_to_api
+// expects (assignee / ticket / requester / reviewer / flagger names) + client name.
+function reviews_select(): string {
+    return 'SELECT t.*, u.name AS assignee_name, tk.id AS ticket_id, ru.name AS requester_name,'
+         . ' rw.name AS review_with_name, rb.name AS review_by_name, c.name AS client_name'
+         . ' FROM tasks t'
+         . ' JOIN clients c ON c.id = t.client_id'
+         . ' LEFT JOIN users u ON u.id = t.assignee_id'
+         . ' LEFT JOIN tickets tk ON tk.task_id = t.id AND tk.state = "accepted"'
+         . ' LEFT JOIN users ru ON ru.id = tk.requester_id'
+         . ' LEFT JOIN users rw ON rw.id = t.review_with'
+         . ' LEFT JOIN users rb ON rb.id = t.review_by';
+}
+
+// Two lists for the current user: tasks I flagged for review (grouped by the
+// reviewer; un-assigned flags sit in a "No reviewer yet" group at the top), and
+// tasks others flagged for review with me (grouped by who flagged them).
+// Team-only: user_workspace_id() already 403s requesters.
+function reviews_list(array $user): void {
+    $wid = user_workspace_id($user);
+    $me  = (int)($user['id'] ?? 0);
+
+    // I want to review — anything I flagged. NULL reviewer ("No reviewer yet") first.
+    $s = db()->prepare(
+        reviews_select()
+        . ' WHERE t.workspace_id = ? AND t.review_by = ?'
+        . ' ORDER BY (t.review_with IS NULL) DESC, rw.name ASC, t.updated_at DESC'
+    );
+    $s->execute([$wid, $me]);
+    $mine = group_reviews($s->fetchAll(), 'review_with', 'review_with_name', 'No reviewer yet');
+
+    // Others want to review with me — flagged for me by someone else.
+    $s = db()->prepare(
+        reviews_select()
+        . ' WHERE t.workspace_id = ? AND t.review_with = ? AND t.review_by <> ?'
+        . ' ORDER BY rb.name ASC, t.updated_at DESC'
+    );
+    $s->execute([$wid, $me, $me]);
+    $forMe = group_reviews($s->fetchAll(), 'review_by', 'review_by_name', 'Someone');
+
+    json_out(['mine' => $mine, 'forMe' => $forMe]);
 }
 
 // --- Activity log (task_events) ---

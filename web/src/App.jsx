@@ -63,6 +63,7 @@ export default function App() {
   const [scope, setScope] = useState('mine');
   const [chatUnread, setChatUnread] = useState(0);
   const [ticketAlert, setTicketAlert] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [liveNotes, setLiveNotes] = useState([]);
@@ -129,6 +130,15 @@ export default function App() {
     const t = setInterval(() => { if (alive) loadTicketAlert(); }, 20000);
     return () => { alive = false; clearInterval(t); };
   }, [user, kind, tvMode, loadTicketAlert]);
+
+  // Reviews badge: how many tasks others have flagged for review with me.
+  const loadReviewCount = useCallback(() => api.reviews().then((d) => {
+    setReviewCount((d.forMe || []).reduce((n, g) => n + g.tasks.length, 0));
+  }).catch(() => {}), []);
+  useEffect(() => {
+    if (!user || kind !== 'team' || tvMode) return;
+    loadReviewCount();
+  }, [user, kind, tvMode, loadReviewCount, liveTick]);
 
   const refresh = useCallback(async () => {
     await loadClients(); await loadToday(scope);
@@ -218,6 +228,7 @@ export default function App() {
       if (modal.task) await api.updateTask(modal.task.id, data);
       else await api.createTask({ ...data, clientId: selected.id });
       setModal(null); await refresh();
+      setLiveTick((n) => n + 1); loadReviewCount();   // refresh Reviews view + badge
     } catch (e) { flash(e.message); }
   };
   const changeStatus = async (t, status) => { try { await api.updateTask(t.id, { status }); await refresh(); } catch (e) { flash(e.message); } };
@@ -297,6 +308,13 @@ export default function App() {
             </span>
             <span className="tl"><b>Activity</b></span>
           </button>
+          <button className={'nav-btn' + (tab === 'reviews' ? ' active' : '')} onClick={() => setTab('reviews')}>
+            <span className="ti">
+              <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 4.5h11M3.5 9h11M3.5 13.5h7" /><circle cx="14" cy="13.5" r="2.2" /><path d="M15.6 15.1 17 16.5" /></svg>
+            </span>
+            <span className="tl"><b>Reviews</b></span>
+            {reviewCount > 0 && <span className="tbadge">{reviewCount}</span>}
+          </button>
         </div>
 
         <div className="clients-head">
@@ -340,6 +358,7 @@ export default function App() {
           : tab === 'requests' ? <RequestsView isAdmin={isAdmin} holidays={holidays} onGotoClient={gotoClient} onChanged={() => { loadTicketAlert(); refresh(); }} flash={flash} userName={user.name} />
           : tab === 'calendar' ? <Calendar members={members} meId={user.id} holidays={holidays} onGotoClient={gotoClient} flash={flash} reloadSignal={liveTick} />
           : tab === 'activity' ? <ActivityView members={members} clients={clients} onGoto={gotoClient} reloadSignal={liveTick} />
+          : tab === 'reviews' ? <ReviewsView meId={user.id} onGoto={gotoClient} onEditTask={(t) => setModal({ type: 'task', task: t })} reloadSignal={liveTick} onChanged={loadReviewCount} flash={flash} />
           : tab === 'clients' ? <MobileClientsView clients={clients} onGoto={gotoClient} onAdd={() => setModal({ type: 'client' })} />
           : tab === 'today' ? <TodayView today={today} scope={scope} onScope={setScope} onStatus={changeStatus} onGoto={gotoClient}
             onReminderDelete={reminderDelete} />
@@ -526,6 +545,85 @@ function ActivityView({ members, clients, onGoto, reloadSignal }) {
   );
 }
 
+function ReviewsView({ meId, onGoto, onEditTask, reloadSignal, onChanged, flash }) {
+  const [data, setData] = useState({ mine: [], forMe: [] });
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    return api.reviews()
+      .then((d) => setData({ mine: d.mine || [], forMe: d.forMe || [] }))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load, reloadSignal]);
+
+  const clear = async (id) => {
+    try { await api.clearReview(id); await load(); onChanged && onChanged(); }
+    catch (e) { flash && flash(e.message); }
+  };
+
+  const item = (t, canClear) => (
+    <li key={t.id} className="review-item">
+      <div className="ri-head">
+        <p className="ri-title">{t.title}</p>
+        <span className={'status-pill s-' + t.status}><span className={'d dot ' + t.status} />{STATUS_LABEL[t.status]}</span>
+      </div>
+      <div className="ri-meta">
+        {t.clientName && <button className="ac-client" onClick={() => onGoto(t.clientId)}>{t.clientName}</button>}
+      </div>
+      {t.notes
+        ? <div className="t-note ri-note">
+            <span className="t-note-label">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
+              Private note
+            </span>
+            {t.notes}
+          </div>
+        : <p className="ri-nonote">No private note yet — add your discussion points by opening the task.</p>}
+      <div className="ri-actions">
+        <button className="btn sm ghost" onClick={() => onEditTask(t)}>Open task</button>
+        {canClear && <button className="btn sm" onClick={() => clear(t.id)}>Clear</button>}
+      </div>
+    </li>
+  );
+
+  const groupList = (groups, canClear) => groups.map((g) => (
+    <div className="review-group" key={(g.groupId || 'none') + (canClear ? 'm' : 'f')}>
+      <h4 className="review-group-head">{g.groupName} <span className="rg-count">{g.tasks.length}</span></h4>
+      <ul className="review-items">{g.tasks.map((t) => item(t, canClear))}</ul>
+    </div>
+  ));
+
+  const mineEmpty = !data.mine.length;
+  const forMeEmpty = !data.forMe.length;
+
+  return (
+    <div className="content reviews">
+      <div className="topbar">
+        <div className="who">
+          <h2>Reviews</h2>
+          <p className="sub">Tasks flagged to talk through, grouped by person. Clearing removes the flag — the task and its notes stay put.</p>
+        </div>
+      </div>
+
+      <section className="review-sec">
+        <h3 className="review-sec-head">I want to review</h3>
+        {mineEmpty
+          ? <div className="empty sm"><p>{loading ? 'Loading…' : 'Nothing flagged yet. Set “Review with” on a task to add it here.'}</p></div>
+          : groupList(data.mine, true)}
+      </section>
+
+      <section className="review-sec">
+        <h3 className="review-sec-head">Others want to review with me</h3>
+        {forMeEmpty
+          ? <div className="empty sm"><p>{loading ? 'Loading…' : 'Nothing flagged for you right now.'}</p></div>
+          : groupList(data.forMe, false)}
+      </section>
+    </div>
+  );
+}
+
 function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask, onDeleteTask, onStatus, onEditClient }) {
   const open = tasks.filter((t) => t.status !== 'done').length;
   const [showReq, setShowReq] = useState(false);
@@ -620,6 +718,7 @@ function TaskCard({ t, onStatus, onEdit, onDelete }) {
         {t.detail && <p className="t-detail">{t.detail}</p>}
         <div className="t-meta">
           {t.assignee && <span className="assignee-chip">{t.assignee}</span>}
+          {t.reviewById && <span className="review-chip" title={t.reviewWith ? `Flagged to review with ${t.reviewWith}` : 'Flagged for review'}>Review{t.reviewWith ? ': ' + t.reviewWith : ''}</span>}
           {t.dueDate && <span className={'due' + (overdue ? ' over' : '')}>{overdue ? 'Overdue · ' : 'Due '}{fmtDate(t.dueDate)}</span>}
           {t.estHours ? <span className="t-est" title="Estimated time to complete (internal)">~{t.estHours}h</span> : null}
           <span className="t-added">Added {fmtDate(t.createdAt)}</span>
