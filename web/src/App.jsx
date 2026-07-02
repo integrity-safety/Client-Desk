@@ -100,6 +100,7 @@ export default function App() {
   const loadClients = useCallback(() => api.clients().then((r) => setClients(r.clients)), []);
   const loadToday = useCallback((sc) => api.today(sc).then(setToday), []);
   const reminderDelete = useCallback((id) => api.deleteTimeline(id).then(() => loadToday(scope)).catch(() => {}), [loadToday, scope]);
+  const reminderUpdate = useCallback((id, patch) => api.updateTimeline(id, patch).then(() => loadToday(scope)).catch(() => {}), [loadToday, scope]);
   const loadTasks = useCallback((cid) => api.tasks(cid).then((r) => setTasks(r.tasks)), []);
   const loadMembers = useCallback(() => api.team().then((r) => setMembers(r.members || [])), []);
   const loadHolidays = useCallback(() => api.holidays().then((r) => setHolidays(r.holidays || [])).catch(() => {}), []);
@@ -361,7 +362,7 @@ export default function App() {
           : tab === 'reviews' ? <ReviewsView meId={user.id} onGoto={gotoClient} onEditTask={(t) => setModal({ type: 'task', task: t })} reloadSignal={liveTick} onChanged={loadReviewCount} flash={flash} />
           : tab === 'clients' ? <MobileClientsView clients={clients} onGoto={gotoClient} onAdd={() => setModal({ type: 'client' })} />
           : tab === 'today' ? <TodayView today={today} scope={scope} onScope={setScope} onStatus={changeStatus} onGoto={gotoClient}
-            onReminderDelete={reminderDelete} />
+            onReminderDelete={reminderDelete} onReminderUpdate={reminderUpdate} />
           : tab === 'weekly' ? <WeeklyView onGoto={gotoClient} />
           : selected ? <ClientView client={selected} tasks={tasks} memberName={memberName} isAdmin={isAdmin}
             onAddTask={() => setModal({ type: 'task' })}
@@ -751,7 +752,7 @@ function TaskCard({ t, onStatus, onEdit, onDelete }) {
   );
 }
 
-function TodayView({ today, scope, onScope, onStatus, onGoto, onReminderDelete }) {
+function TodayView({ today, scope, onScope, onStatus, onGoto, onReminderDelete, onReminderUpdate }) {
   const reminders = today.reminders || [];
   const count = today.overdue.length + today.today.length + reminders.length;
   return (
@@ -773,7 +774,7 @@ function TodayView({ today, scope, onScope, onStatus, onGoto, onReminderDelete }
               <p>{scope === 'mine' ? 'Nothing assigned to you is overdue or due today.' : 'Nothing across the team is overdue or due today.'} Add due dates to tasks and they'll show up here.</p>
             </div>
           : <>
-            <TodayReminders items={reminders} onGoto={onGoto} onDelete={onReminderDelete} />
+            <TodayReminders items={reminders} onGoto={onGoto} onDelete={onReminderDelete} onUpdate={onReminderUpdate} />
             <TodaySection title="Overdue" kind="over" items={today.overdue} scope={scope} onStatus={onStatus} onGoto={onGoto} />
             <TodaySection title="Due today" kind="today" items={today.today} scope={scope} onStatus={onStatus} onGoto={onGoto} />
           </>}
@@ -782,7 +783,21 @@ function TodayView({ today, scope, onScope, onStatus, onGoto, onReminderDelete }
   );
 }
 
-function ReminderRow({ r, onGoto, onDelete }) {
+function ReminderRow({ r, onGoto, onDelete, onUpdate }) {
+  const hasNote = !!(r.details && r.details.trim());
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState(r.details || '');
+
+  const openNote = () => { setNote(r.details || ''); setNoteOpen(true); };
+  const closeNote = () => { setNote(r.details || ''); setNoteOpen(false); };
+  const saveNote = () => { onUpdate(r.id, { details: note }); setNoteOpen(false); };
+  const dismiss = () => {
+    // If the editor is open with an unsaved change, fold the note into the dismiss.
+    const patch = { done: true };
+    if (noteOpen && note !== (r.details || '')) patch.details = note;
+    onUpdate(r.id, patch);
+  };
+
   return (
     <div className="brief-card">
       <div className="bc-body">
@@ -791,8 +806,25 @@ function ReminderRow({ r, onGoto, onDelete }) {
         </button>
         <p className="bc-title">{r.body}</p>
         <div className={'bc-due' + (r.overdue ? ' over' : ' today')}>Reminder · {fmtDate(r.date)}</div>
+        {noteOpen ? (
+          <div className="rm-note-edit">
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note or response…" rows={2} />
+            <div className="rm-note-row">
+              <button className="btn xs primary" onClick={saveNote}>Save note</button>
+              <button className="btn xs" onClick={closeNote}>Cancel</button>
+            </div>
+          </div>
+        ) : hasNote ? (
+          <div className="rm-note-show">
+            <p className="rm-note-body">{r.details}</p>
+            <button className="rm-note-link" onClick={openNote}>Edit note</button>
+          </div>
+        ) : (
+          <button className="rm-note-link" onClick={openNote}>Add note</button>
+        )}
       </div>
       <div className="t-actions">
+        <button className="btn xs" title="Dismiss — clears it from Today but keeps it on the client timeline" onClick={dismiss}>Dismiss</button>
         <button className="icon-btn" title="Delete reminder" onClick={() => onDelete(r.id)}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 4h10M6 4V2.5h4V4M5 4l.5 9h5L11 4" /></svg>
         </button>
@@ -801,7 +833,7 @@ function ReminderRow({ r, onGoto, onDelete }) {
   );
 }
 
-function RemindersGroup({ items, onGoto, onDelete, defaultShown }) {
+function RemindersGroup({ items, onGoto, onDelete, onUpdate, defaultShown }) {
   const [show, setShow] = useState(defaultShown);
   if (!items || !items.length) return null;
   return (
@@ -810,14 +842,14 @@ function RemindersGroup({ items, onGoto, onDelete, defaultShown }) {
         <span className="dot reminder" /><h3>Reminders</h3><span className="n">{items.length}</span>
         <button className="rm-toggle" onClick={() => setShow((s) => !s)}>{show ? 'Hide' : 'Show'}</button>
       </div>
-      {show && items.map((r) => <ReminderRow key={'rm' + r.id} r={r} onGoto={onGoto} onDelete={onDelete} />)}
+      {show && items.map((r) => <ReminderRow key={'rm' + r.id} r={r} onGoto={onGoto} onDelete={onDelete} onUpdate={onUpdate} />)}
     </div>
   );
 }
 
-function TodayReminders({ items, onGoto, onDelete }) {
+function TodayReminders({ items, onGoto, onDelete, onUpdate }) {
   if (!items || !items.length) return null;
-  return <RemindersGroup items={items} onGoto={onGoto} onDelete={onDelete} defaultShown={true} />;
+  return <RemindersGroup items={items} onGoto={onGoto} onDelete={onDelete} onUpdate={onUpdate} defaultShown={true} />;
 }
 
 function TodaySection({ title, kind, items, scope, onStatus, onGoto }) {
@@ -1427,11 +1459,12 @@ function TimelineView({ client }) {
   if (!data) return <p className="none" style={{ padding: '14px 2px' }}>Loading timeline…</p>;
 
   const today = data.today || todayStr();
+  const isUpcoming = (e) => e.kind === 'reminder' && !e.done && e.date >= today;
   const upcoming = data.entries
-    .filter((e) => e.kind === 'reminder' && e.date >= today)
+    .filter(isUpcoming)
     .sort((a, b) => a.date.localeCompare(b.date));
   const rest = [
-    ...data.entries.filter((e) => !(e.kind === 'reminder' && e.date >= today)),
+    ...data.entries.filter((e) => !isUpcoming(e)),
     ...data.tasks,
   ].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -1484,14 +1517,16 @@ function TimelineTask({ it }) {
 function TimelineEntry({ en, today, onSave, onDelete }) {
   const isReminder = en.kind === 'reminder';
   const isNote = en.kind === 'note';
-  const overdue = isReminder && en.date < today;
+  const dismissed = isReminder && en.done;
+  const overdue = isReminder && !dismissed && en.date < today;
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(en.body);
   const [date, setDate] = useState(en.date);
   const startEdit = () => { setBody(en.body); setDate(en.date); setEditing(true); };
   const save = async () => { const b = body.trim(); if (!b) return; await onSave(en.id, { body: b, date }); setEditing(false); };
 
-  // Meeting-notes block (notes only): collapsed by default behind a plain arrow.
+  // Free-text block. On notes it's meeting notes (behind an arrow); on reminders
+  // it's the dismiss note / response, shown inline.
   const hasDetails = !!(en.details && en.details.trim());
   const [expanded, setExpanded] = useState(false);
   const [editDetails, setEditDetails] = useState(false);
@@ -1500,14 +1535,30 @@ function TimelineEntry({ en, today, onSave, onDelete }) {
   const saveDetails = async () => { await onSave(en.id, { details: detailsText }); setEditDetails(false); };
   const showEditor = editDetails || !hasDetails;
 
+  // Reminder note editor (inline, available anytime).
+  const [rnoteOpen, setRnoteOpen] = useState(false);
+  const openRnote = () => { setDetailsText(en.details || ''); setRnoteOpen(true); };
+  const closeRnote = () => { setDetailsText(en.details || ''); setRnoteOpen(false); };
+  const saveRnote = async () => { await onSave(en.id, { details: detailsText }); setRnoteOpen(false); };
+
+  const dismissedOn = dismissed && en.doneAt ? fmtDate(en.doneAt.slice(0, 10)) : '';
+  const kindLabel = isReminder
+    ? (dismissed ? (dismissedOn ? 'Reminder · dismissed ' + dismissedOn : 'Reminder · dismissed') : (overdue ? 'Reminder · overdue' : 'Reminder'))
+    : 'Note';
+
   return (
-    <div className={'tl-item tl-entry ' + en.kind + (overdue ? ' overdue' : '')}>
+    <div className={'tl-item tl-entry ' + en.kind + (overdue ? ' overdue' : '') + (dismissed ? ' done' : '')}>
       <span className="tl-date">{fmtDate(en.date)}</span>
       <div className="tl-dot-line"><span className={'tl-node ' + en.kind} /></div>
       <div className="tl-card">
         <div className="tl-card-top">
-          <span className="tl-kind">{isReminder ? (overdue ? 'Reminder · overdue' : 'Reminder') : 'Note'}</span>
+          <span className="tl-kind">{kindLabel}</span>
           <div className="tl-actions">
+            {isReminder && !editing && (
+              dismissed
+                ? <button className="btn xs" title="Bring this reminder back to Today" onClick={() => onSave(en.id, { done: false })}>Un-dismiss</button>
+                : <button className="btn xs" title="Dismiss — clears it from Today, keeps it here" onClick={() => onSave(en.id, { done: true })}>Dismiss</button>
+            )}
             {isNote && !editing && (
               <button className={'icon-btn tl-expand' + (expanded ? ' open' : '')} title={expanded ? 'Hide meeting notes' : 'Meeting notes'} onClick={() => setExpanded((v) => !v)}>
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4" /></svg>
@@ -1536,6 +1587,26 @@ function TimelineEntry({ en, today, onSave, onDelete }) {
           <>
             <p className="tl-body">{en.body}</p>
             {en.author && <span className="tl-by">{en.author}</span>}
+            {isReminder && (
+              <div className="rm-note tl-rnote">
+                {rnoteOpen ? (
+                  <div className="rm-note-edit">
+                    <textarea value={detailsText} onChange={(e) => setDetailsText(e.target.value)} placeholder="Add a note or response…" rows={2} />
+                    <div className="rm-note-row">
+                      <button className="btn xs primary" onClick={saveRnote}>Save note</button>
+                      <button className="btn xs" onClick={closeRnote}>Cancel</button>
+                    </div>
+                  </div>
+                ) : hasDetails ? (
+                  <div className="rm-note-show">
+                    <p className="rm-note-body">{en.details}</p>
+                    <button className="rm-note-link" onClick={openRnote}>Edit note</button>
+                  </div>
+                ) : (
+                  <button className="rm-note-link" onClick={openRnote}>Add note</button>
+                )}
+              </div>
+            )}
             {isNote && expanded && (
               <div className="tl-notes">
                 {showEditor ? (

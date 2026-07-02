@@ -984,3 +984,23 @@
 }
 .tl-notes-edit textarea:focus{outline:none;border-color:var(--accent-border);box-shadow:0 0 0 3px var(--accent-soft)}
 .tl-notes-edit .tl-edit-row{margin-top:8px}
+
+/* ---------- p29: dismissible reminders + reminder notes ---------- */
+/* Today reminder cards: notes editor / display + Dismiss action. */
+.rm-note-link{margin-top:8px;background:none;border:none;padding:0;cursor:pointer;
+  font-size:12.5px;font-weight:500;color:var(--accent-deep);text-decoration:underline;text-underline-offset:2px}
+.rm-note-link:hover{color:var(--accent)}
+.rm-note-show{margin-top:8px}
+.rm-note-body{margin:0 0 5px;font-size:13.5px;line-height:1.5;color:var(--ink-soft);
+  white-space:pre-wrap;overflow-wrap:anywhere}
+.rm-note-edit{margin-top:8px}
+.rm-note-edit textarea{width:100%;min-height:52px;resize:vertical;box-sizing:border-box;
+  border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;
+  font:inherit;font-size:13.5px;line-height:1.5;color:var(--ink);background:var(--surface)}
+.rm-note-edit textarea:focus{outline:none;border-color:var(--accent-border);box-shadow:0 0 0 3px var(--accent-soft)}
+.rm-note-row{display:flex;gap:8px;margin-top:7px}
+/* Reminder note block on the client timeline. */
+.tl-rnote{margin-top:9px}
+.tl-entry.done .tl-kind{color:var(--green)}
+/* Dismissed reminders keep their note readable (not lined-through/dimmed). */
+.tl-entry.done .rm-note-body{opacity:1}

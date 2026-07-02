@@ -26,9 +26,10 @@ function view_today(array $user): void {
 
     // Client-level reminders that have come due (whole-team, regardless of scope).
     $rm = db()->prepare(
-        'SELECT te.id, te.client_id, te.body, te.entry_date, c.name AS client_name
+        'SELECT te.id, te.client_id, te.body, te.details, te.entry_date, c.name AS client_name
          FROM timeline_entries te JOIN clients c ON c.id = te.client_id
          WHERE te.workspace_id = ? AND te.kind = "reminder"
+           AND te.done_at IS NULL
            AND te.entry_date <= ?
          ORDER BY te.entry_date ASC, c.name ASC'
     );
@@ -40,6 +41,7 @@ function view_today(array $user): void {
             'clientId' => (int)$r['client_id'],
             'client'   => $r['client_name'],
             'body'     => $r['body'],
+            'details'  => $r['details'],
             'date'     => $r['entry_date'],
             'overdue'  => $r['entry_date'] < $today,
         ];
@@ -370,6 +372,10 @@ function fetch_tasks(int $wid, int $clientId, string $status, ?string $from = nu
 // team this is close enough. Adjust the offset here if you want a fixed local day.
 function gmdate_local_today(): string {
     return (new DateTime('now', new DateTimeZone(report_tz())))->format('Y-m-d');
+}
+// Current timestamp ("now") in the reporting timezone, for DATETIME columns.
+function gmdate_local_now(): string {
+    return (new DateTime('now', new DateTimeZone(report_tz())))->format('Y-m-d H:i:s');
 }
 function report_tz(): string {
     $c = app_config();

@@ -116,15 +116,25 @@ function timeline_update(array $user, int $id): void {
     $body = array_key_exists('body', $b) ? trim((string)$b['body']) : $cur['body'];
     if ($body === '') json_out(['error' => 'Write something first'], 422);
     $date = array_key_exists('date', $b) ? (norm_date($b['date']) ?? $cur['entry_date']) : $cur['entry_date'];
-    // Meeting-notes block (notes only). Blank clears it back to NULL.
+    // Free-text block. On notes this is the meeting-notes field; on reminders it's
+    // the dismiss note / response. Blank clears it back to NULL.
     if (array_key_exists('details', $b)) {
         $dt = trim((string)$b['details']);
         $details = $dt === '' ? null : $dt;
     } else {
         $details = $cur['details'];
     }
-    $s = db()->prepare('UPDATE timeline_entries SET body = ?, details = ?, entry_date = ? WHERE id = ?');
-    $s->execute([$body, $details, $date, $id]);
+    // Dismiss / reopen a reminder: {done:true} stamps done_at now, {done:false}
+    // clears it (back onto Today). Reminders only; notes ignore it. Omitting the
+    // key preserves whatever was there, so editing a dismissed reminder's note
+    // doesn't un-dismiss it.
+    if ($cur['kind'] === 'reminder' && array_key_exists('done', $b)) {
+        $doneAt = filter_var($b['done'], FILTER_VALIDATE_BOOLEAN) ? gmdate_local_now() : null;
+    } else {
+        $doneAt = $cur['done_at'];
+    }
+    $s = db()->prepare('UPDATE timeline_entries SET body = ?, details = ?, entry_date = ?, done_at = ? WHERE id = ?');
+    $s->execute([$body, $details, $date, $doneAt, $id]);
     json_out(['ok' => true]);
 }
 
