@@ -11,6 +11,11 @@ import { applyTheme, PRESETS } from './theme.js';
 
 const STATUS_LABEL = { todo: 'To do', inprogress: 'In progress', blocked: 'Blocked', done: 'Done' };
 const STATUS_ORDER = ['todo', 'inprogress', 'blocked', 'done'];
+// Maps a requester-facing ticket status label to its CSS tone class (mirrors STATUS_TONE in Portal.jsx).
+const STATUS_TONE = {
+  'Submitted': 'submitted', 'Accepted': 'accepted', 'In progress': 'inprogress',
+  'Needs your input': 'needs', 'Completed': 'done', 'Declined': 'declined',
+};
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 const PRIORITY_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
 const STALE_DAYS = 14;
@@ -1182,7 +1187,7 @@ function TicketRow({ t, onClick }) {
         <span className="tk-date">{t.client}{t.requester ? ` · ${t.requester}` : ''}{dateHint ? ` · ${dateHint}` : ''}</span>
       </span>
       {t.unread > 0 && <span className="tk-unread">{t.unread} new</span>}
-      <span className={'tk-status ' + (TK_TONE[t.status] || 'submitted')}>{t.status}</span>
+      <span className={'tk-status ' + (STATUS_TONE[t.status] || 'submitted')}>{t.status}</span>
     </button>
   );
 }
@@ -1212,7 +1217,7 @@ function TicketDetailTeam({ id, isAdmin, userName, holidays = [], onBack, onGoto
             ? <select className={'status-sel s-' + (t.taskStatus || 'todo')} value={t.taskStatus || 'todo'} onChange={(e) => changeTaskStatus(e.target.value)} aria-label="Status" style={{ alignSelf: 'center' }}>
                 {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
               </select>
-            : <span className={'tk-status ' + (TK_TONE[t.status] || 'submitted')} style={{ alignSelf: 'center' }}>{t.status}</span>}
+            : <span className={'tk-status ' + (STATUS_TONE[t.status] || 'submitted')} style={{ alignSelf: 'center' }}>{t.status}</span>}
           {t.taskId && <button className="btn" onClick={() => onGotoClient(t.clientId)}>Open in client</button>}
           {isAdmin && (t.state === 'cancelled' || t.state === 'declined') && <button className="btn danger" onClick={deleteTicket}>Delete request</button>}
         </div>
