@@ -642,11 +642,14 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
     let list = tasks.filter((t) => filter === 'done' ? t.status === 'done' : t.status !== 'done');
     const dueVal = (t) => t.dueDate ? new Date(t.dueDate + 'T00:00:00').getTime() : Infinity;
     const created = (t) => new Date((t.createdAt || '').replace(' ', 'T')).getTime();
+    // Never-completed tasks sort last under "Recently completed".
+    const done = (t) => t.completedAt ? new Date(t.completedAt.replace(' ', 'T')).getTime() : -Infinity;
     list = [...list];
     if (sort === 'priority') list.sort((a, b) => (PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]) || (dueVal(a) - dueVal(b)) || (created(a) - created(b)));
     else if (sort === 'due') list.sort((a, b) => (dueVal(a) - dueVal(b)) || (PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]));
     else if (sort === 'oldest') list.sort((a, b) => created(a) - created(b));
     else if (sort === 'newest') list.sort((a, b) => created(b) - created(a));
+    else if (sort === 'completed') list.sort((a, b) => (done(b) === done(a) ? 0 : done(b) > done(a) ? 1 : -1) || (b.id - a.id));
     return list;
   })();
   return (
@@ -685,13 +688,14 @@ function ClientView({ client, tasks, memberName, isAdmin, onAddTask, onEditTask,
             <div className="list-controls">
               <div className="seg small">
                 {[['todo', 'To-Do'], ['done', 'Done']].map(([k, l]) => (
-                  <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>{l}</button>
+                  <button key={k} className={filter === k ? 'on' : ''} onClick={() => { setFilter(k); setSort(k === 'done' ? 'completed' : 'priority'); }}>{l}</button>
                 ))}
               </div>
               {staleCount > 0 && <span className="stale-note" title="Tasks untouched for 2+ weeks">⏳ {staleCount} going stale</span>}
               <label className="sort-by">Sort
                 <select value={sort} onChange={(e) => setSort(e.target.value)}>
                   <option value="priority">Priority (high first)</option>
+                  <option value="completed">Recently completed</option>
                   <option value="due">Due date (soonest)</option>
                   <option value="oldest">Oldest submitted</option>
                   <option value="newest">Newest submitted</option>
